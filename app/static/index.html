@@ -8,9 +8,9 @@
   <body>
     <h2>Downloads</h2>
     <p>
-      <a href="http://localhost:9117" target="_blank" rel="noopener noreferrer">Jackett</a>:
+      <a id="jackett-link" href="#" target="_blank" rel="noopener noreferrer">Jackett</a>:
       <span id="jackett-status">Unknown</span> |
-      <a href="http://localhost:8080" target="_blank" rel="noopener noreferrer">qBittorrent</a>:
+      <a id="qbittorrent-link" href="#" target="_blank" rel="noopener noreferrer">qBittorrent</a>:
       <span id="qbittorrent-status">Unknown</span> |
       Disk: <span id="disk-status">Unknown</span>
     </p>
@@ -64,6 +64,17 @@
 
       function setMessage(text) {
         document.getElementById("message").textContent = text || "";
+      }
+
+      function serviceUrl(port) {
+        const url = new URL(window.location.href);
+        url.port = String(port);
+        return url.toString();
+      }
+
+      function setServiceLinks() {
+        document.getElementById("jackett-link").href = serviceUrl(9117);
+        document.getElementById("qbittorrent-link").href = serviceUrl(8080);
       }
 
       function formatSpeed(bytesPerSec) {
@@ -319,6 +330,7 @@
         setMessage("Global limits updated");
       });
 
+      setServiceLinks();
       loadLimits();
       loadServiceStatus();
       loadTorrents();
