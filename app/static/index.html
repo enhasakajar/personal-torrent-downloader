@@ -1,0 +1,325 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Minimal Torrent Browser</title>
+  </head>
+  <body>
+    <h2>Downloads</h2>
+    <p>
+      Jackett: <span id="jackett-status">Unknown</span> |
+      qBittorrent: <span id="qbittorrent-status">Unknown</span> |
+      Disk: <span id="disk-status">Unknown</span>
+    </p>
+    <div>
+      <label for="download-limit-mbps">Global Download Limit (MB/s):</label>
+      <input type="number" id="download-limit-mbps" min="0" step="0.1" />
+      <label for="upload-limit-mbps">Global Upload Limit (MB/s):</label>
+      <input type="number" id="upload-limit-mbps" min="0" step="0.1" />
+      <button type="button" id="save-limits">Save Limits</button>
+    </div>
+    <table border="1" cellpadding="6" cellspacing="0">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Progress %</th>
+          <th>Ratio</th>
+          <th>Down Speed</th>
+          <th>Up Speed</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="downloads-body"></tbody>
+    </table>
+
+    <h2>Search (Jackett)</h2>
+    <form id="search-form">
+      <input type="text" id="search-input" placeholder="Search movies..." />
+      <button type="submit">Search</button>
+    </form>
+
+    <table border="1" cellpadding="6" cellspacing="0">
+      <thead>
+        <tr>
+          <th><button type="button" data-sort-key="title">Title</button></th>
+          <th><button type="button" data-sort-key="size">Size</button></th>
+          <th><button type="button" data-sort-key="seeders">Seeders</button></th>
+          <th><button type="button" data-sort-key="source">Source</button></th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="search-body"></tbody>
+    </table>
+
+    <p id="message"></p>
+
+    <script>
+      let searchItems = [];
+      let sortKey = "seeders";
+      let sortDirection = "desc";
+
+      function setMessage(text) {
+        document.getElementById("message").textContent = text || "";
+      }
+
+      function formatSpeed(bytesPerSec) {
+        const formatted = formatBytes(bytesPerSec);
+        return formatted ? `${formatted}/s` : "0 B/s";
+      }
+
+      function bpsToMbps(bps) {
+        return Number((Number(bps || 0) / (1024 * 1024)).toFixed(2));
+      }
+
+      function mbpsToBps(mbps) {
+        const value = Number(mbps || 0);
+        if (!Number.isFinite(value) || value < 0) {
+          return 0;
+        }
+        return Math.round(value * 1024 * 1024);
+      }
+
+      async function loadLimits() {
+        const response = await fetch("/api/limits");
+        const data = await response.json();
+        if (!response.ok) {
+          setMessage(data.error || "Failed to load limits");
+          return;
+        }
+        document.getElementById("download-limit-mbps").value = bpsToMbps(data.download_limit_bps);
+        document.getElementById("upload-limit-mbps").value = bpsToMbps(data.upload_limit_bps);
+      }
+
+      function setServiceStatus(id, service) {
+        const el = document.getElementById(id);
+        if (!service) {
+          el.textContent = "Unknown";
+          return;
+        }
+        if (service.ok) {
+          el.textContent = "Online";
+        } else {
+          el.textContent = `Offline (${service.error || "error"})`;
+        }
+      }
+
+      function setDiskStatus(disk) {
+        const el = document.getElementById("disk-status");
+        if (!disk) {
+          el.textContent = "Unknown";
+          return;
+        }
+        if (!disk.ok) {
+          el.textContent = `Unavailable (${disk.error || "error"})`;
+          return;
+        }
+        const used = formatBytes(disk.used);
+        const free = formatBytes(disk.free);
+        const total = formatBytes(disk.total);
+        const pct =
+          disk.total > 0
+            ? ((Number(disk.used) / Number(disk.total)) * 100).toFixed(1)
+            : "0";
+        const label = disk.path ? `${disk.path}: ` : "";
+        el.textContent = `${label}${used} used / ${total} total (${free} free, ${pct}% used)`;
+      }
+
+      async function loadServiceStatus() {
+        const response = await fetch("/api/status");
+        const data = await response.json();
+        if (!response.ok) {
+          setMessage(data.error || "Failed to load service status");
+          return;
+        }
+        setServiceStatus("jackett-status", data.jackett);
+        setServiceStatus("qbittorrent-status", data.qbittorrent);
+        setDiskStatus(data.disk);
+      }
+
+      function formatBytes(bytes) {
+        const value = Number(bytes || 0);
+        if (!Number.isFinite(value) || value <= 0) {
+          return "";
+        }
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let size = value;
+        let unit = 0;
+        while (size >= 1024 && unit < units.length - 1) {
+          size /= 1024;
+          unit += 1;
+        }
+        const precision = size >= 10 || unit === 0 ? 0 : 1;
+        return `${size.toFixed(precision)} ${units[unit]}`;
+      }
+
+      function compareValues(a, b, key) {
+        if (key === "size" || key === "seeders") {
+          const av = Number(a[key] || 0);
+          const bv = Number(b[key] || 0);
+          return av - bv;
+        }
+        const av = String(a[key] || "").toLowerCase();
+        const bv = String(b[key] || "").toLowerCase();
+        if (av < bv) return -1;
+        if (av > bv) return 1;
+        return 0;
+      }
+
+      function renderSearchRows() {
+        const body = document.getElementById("search-body");
+        body.innerHTML = "";
+        const sorted = [...searchItems].sort((a, b) => {
+          const cmp = compareValues(a, b, sortKey);
+          return sortDirection === "asc" ? cmp : -cmp;
+        });
+        sorted.forEach((item) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${item.title}</td>
+            <td>${formatBytes(item.size)}</td>
+            <td>${item.seeders || 0}</td>
+            <td>${item.source || ""}</td>
+            <td>
+              <button data-url="${item.link}" data-sequential="false">Download</button>
+              <button data-url="${item.link}" data-sequential="true">Download Sequential</button>
+            </td>
+          `;
+          tr.querySelectorAll("button[data-url]").forEach((button) => {
+            button.addEventListener("click", async () => {
+              const addResponse = await fetch("/api/add", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  url: button.dataset.url,
+                  sequential: button.dataset.sequential === "true",
+                }),
+              });
+              const addData = await addResponse.json();
+              if (!addResponse.ok) {
+                setMessage(addData.error || "Failed to add torrent");
+                return;
+              }
+              setMessage(button.dataset.sequential === "true" ? "Sequential torrent added" : "Torrent added");
+              await loadTorrents();
+            });
+          });
+          body.appendChild(tr);
+        });
+      }
+
+      async function loadTorrents() {
+        const body = document.getElementById("downloads-body");
+        body.innerHTML = "";
+        const response = await fetch("/api/torrents");
+        const data = await response.json();
+        if (!response.ok) {
+          setMessage(data.error || "Failed to load torrents");
+          return;
+        }
+        data.items.forEach((item) => {
+          const tr = document.createElement("tr");
+          const href = `/files/${encodeURI(item.path)}`;
+          const paused = String(item.state || "").includes("paused");
+          const actionLabel = paused ? "Resume" : "Pause";
+          const actionEndpoint = paused ? "/api/torrents/resume" : "/api/torrents/pause";
+          tr.innerHTML = `
+            <td><a href="${href}">${item.name}</a></td>
+            <td>${item.state || ""}</td>
+            <td>${item.progress_percent}</td>
+            <td>${item.ratio}</td>
+            <td>${formatSpeed(item.download_speed)}</td>
+            <td>${formatSpeed(item.upload_speed)}</td>
+            <td>
+              <button data-hash="${item.hash}" data-endpoint="${actionEndpoint}">${actionLabel}</button>
+              <button data-hash="${item.hash}" data-endpoint="/api/torrents/delete">Delete (+Data)</button>
+            </td>
+          `;
+          tr.querySelectorAll("button[data-hash]").forEach((actionButton) => {
+            actionButton.addEventListener("click", async () => {
+              const payloadBody = { hash: actionButton.dataset.hash };
+              if (actionButton.dataset.endpoint === "/api/torrents/delete") {
+                payloadBody.delete_files = true;
+              }
+              const response = await fetch(actionButton.dataset.endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payloadBody),
+              });
+              const payload = await response.json();
+              if (!response.ok) {
+                setMessage(payload.error || "Failed to update torrent state");
+                return;
+              }
+              setMessage(
+                actionButton.dataset.endpoint === "/api/torrents/delete"
+                  ? "Torrent deleted with data"
+                  : "Torrent state updated"
+              );
+              await loadTorrents();
+            });
+          });
+          body.appendChild(tr);
+        });
+      }
+
+      async function searchTorrents(query) {
+        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const data = await response.json();
+        if (!response.ok) {
+          setMessage(data.error || "Search failed");
+          return;
+        }
+        searchItems = data.items || [];
+        renderSearchRows();
+      }
+
+      document.getElementById("search-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const q = document.getElementById("search-input").value.trim();
+        if (!q) {
+          setMessage("Enter a search query");
+          return;
+        }
+        await searchTorrents(q);
+      });
+
+      document.querySelectorAll("[data-sort-key]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const nextKey = button.dataset.sortKey;
+          if (sortKey === nextKey) {
+            sortDirection = sortDirection === "asc" ? "desc" : "asc";
+          } else {
+            sortKey = nextKey;
+            sortDirection = nextKey === "title" || nextKey === "source" ? "asc" : "desc";
+          }
+          renderSearchRows();
+        });
+      });
+
+      document.getElementById("save-limits").addEventListener("click", async () => {
+        const downloadLimit = mbpsToBps(document.getElementById("download-limit-mbps").value);
+        const uploadLimit = mbpsToBps(document.getElementById("upload-limit-mbps").value);
+        const response = await fetch("/api/limits", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            download_limit_bps: downloadLimit,
+            upload_limit_bps: uploadLimit,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          setMessage(data.error || "Failed to save limits");
+          return;
+        }
+        setMessage("Global limits updated");
+      });
+
+      loadLimits();
+      loadServiceStatus();
+      loadTorrents();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,53 @@
+services:
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-UTC}
+      - AUTO_UPDATE=true
+    volumes:
+      - ./data/jackett:/config
+      - ./downloads:/downloads
+    ports:
+      - "9117:9117"
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-UTC}
+      - WEBUI_PORT=8080
+    volumes:
+      - ./data/qbittorrent:/config
+      - ./downloads:/downloads
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ./app
+    container_name: torrent-browser-app
+    env_file:
+      - .env
+    environment:
+      - APP_HOST=0.0.0.0
+      - APP_PORT=5000
+      - DOWNLOADS_DIR=/downloads
+      - QBIT_BASE_URL=http://qbittorrent:8080
+      - JACKETT_BASE_URL=http://jackett:9117
+    volumes:
+      - ./downloads:/downloads
+    ports:
+      - "5000:5000"
+    depends_on:
+      - jackett
+      - qbittorrent
+    restart: unless-stopped
