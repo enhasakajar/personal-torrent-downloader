@@ -349,7 +349,8 @@
           const tr = document.createElement("tr");
           const href = `/files/${encodeURI(item.path)}`;
           const fullHref = new URL(href, window.location.origin).toString();
-          const paused = String(item.state || "").includes("paused");
+          const state = String(item.state || "").toLowerCase();
+          const paused = state.includes("paused") || state.includes("stopped");
           const actionLabel = paused ? "Resume" : "Pause";
           const actionEndpoint = paused ? "/api/torrents/resume" : "/api/torrents/pause";
           tr.innerHTML = `
