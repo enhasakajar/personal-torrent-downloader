@@ -88,6 +88,16 @@ def _qbit_post(path: str, data: dict):
     return response
 
 
+def _qbit_post_with_fallback(primary_path: str, fallback_path: str, data: dict):
+    try:
+        return _qbit_post(primary_path, data)
+    except requests.HTTPError as exc:
+        response = exc.response
+        if response is not None and response.status_code == 404 and fallback_path:
+            return _qbit_post(fallback_path, data)
+        raise
+
+
 def _torrent_link_path(torrent: dict) -> str:
     save_path = (torrent.get("save_path") or "").strip()
     content_path = (torrent.get("content_path") or "").strip()
@@ -223,7 +233,11 @@ def pause_torrent():
     if not torrent_hash:
         return jsonify({"error": "Missing hash"}), 400
     try:
-        _qbit_post("/api/v2/torrents/pause", {"hashes": torrent_hash})
+        _qbit_post_with_fallback(
+            "/api/v2/torrents/pause",
+            "/api/v2/torrents/stop",
+            {"hashes": torrent_hash},
+        )
         return jsonify({"ok": True})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -236,7 +250,11 @@ def resume_torrent():
     if not torrent_hash:
         return jsonify({"error": "Missing hash"}), 400
     try:
-        _qbit_post("/api/v2/torrents/resume", {"hashes": torrent_hash})
+        _qbit_post_with_fallback(
+            "/api/v2/torrents/resume",
+            "/api/v2/torrents/start",
+            {"hashes": torrent_hash},
+        )
         return jsonify({"ok": True})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
