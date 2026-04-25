@@ -4,6 +4,104 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Minimal Torrent Browser</title>
+    <style>
+      body {
+        margin: 12px;
+        font-family: sans-serif;
+      }
+      #search-form,
+      #limits-form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      #search-input {
+        min-width: 220px;
+      }
+      #mobile-search-sort {
+        display: none;
+        gap: 8px;
+        margin: 8px 0 10px;
+      }
+      table td,
+      table th {
+        vertical-align: top;
+      }
+      td.actions {
+        white-space: nowrap;
+      }
+      .name-cell {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+      @media (max-width: 768px) {
+        body {
+          margin: 8px;
+        }
+        #search-form,
+        #limits-form {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        #search-input,
+        #download-limit-mbps,
+        #upload-limit-mbps {
+          min-width: 0;
+          width: 100%;
+          box-sizing: border-box;
+        }
+        #mobile-search-sort {
+          display: flex;
+          flex-wrap: wrap;
+        }
+        #mobile-sort-key {
+          flex: 1 1 180px;
+        }
+        table,
+        thead,
+        tbody,
+        tr,
+        td {
+          display: block;
+          width: 100%;
+          box-sizing: border-box;
+        }
+        thead {
+          display: none;
+        }
+        tr {
+          border: 1px solid #999;
+          margin-bottom: 10px;
+          padding: 8px;
+        }
+        td {
+          border: none;
+          padding: 4px 0;
+          white-space: normal;
+        }
+        td::before {
+          content: attr(data-label) ": ";
+          font-weight: 600;
+        }
+        td.name::before,
+        td.actions::before {
+          display: block;
+          margin-bottom: 4px;
+        }
+        td.actions button {
+          margin-right: 8px;
+          margin-bottom: 8px;
+        }
+        .name-cell {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+      }
+    </style>
   </head>
   <body>
     <h2>Downloads</h2>
@@ -14,7 +112,7 @@
       <span id="qbittorrent-status">Unknown</span> |
       Disk: <span id="disk-status">Unknown</span>
     </p>
-    <div>
+    <div id="limits-form">
       <label for="download-limit-mbps">Global Download Limit (MB/s):</label>
       <input type="number" id="download-limit-mbps" min="0" step="0.1" />
       <label for="upload-limit-mbps">Global Upload Limit (MB/s):</label>
@@ -41,6 +139,15 @@
       <input type="text" id="search-input" placeholder="Search movies..." />
       <button type="submit">Search</button>
     </form>
+    <div id="mobile-search-sort">
+      <select id="mobile-sort-key" aria-label="Sort search results">
+        <option value="title">Title</option>
+        <option value="size">Size</option>
+        <option value="seeders" selected>Seeders</option>
+        <option value="source">Source</option>
+      </select>
+      <button type="button" id="mobile-sort-direction">Direction: Desc</button>
+    </div>
 
     <table border="1" cellpadding="6" cellspacing="0">
       <thead>
@@ -64,6 +171,13 @@
 
       function setMessage(text) {
         document.getElementById("message").textContent = text || "";
+      }
+
+      function updateMobileSortControls() {
+        const keySelect = document.getElementById("mobile-sort-key");
+        const directionButton = document.getElementById("mobile-sort-direction");
+        keySelect.value = sortKey;
+        directionButton.textContent = `Direction: ${sortDirection === "asc" ? "Asc" : "Desc"}`;
       }
 
       function serviceUrl(port) {
@@ -190,11 +304,11 @@
         sorted.forEach((item) => {
           const tr = document.createElement("tr");
           tr.innerHTML = `
-            <td>${item.title}</td>
-            <td>${formatBytes(item.size)}</td>
-            <td>${item.seeders || 0}</td>
-            <td>${item.source || ""}</td>
-            <td>
+            <td data-label="Title">${item.title}</td>
+            <td data-label="Size">${formatBytes(item.size)}</td>
+            <td data-label="Seeders">${item.seeders || 0}</td>
+            <td data-label="Source">${item.source || ""}</td>
+            <td data-label="Action" class="actions">
               <button data-url="${item.link}" data-sequential="false">Download</button>
               <button data-url="${item.link}" data-sequential="true">Download Sequential</button>
             </td>
@@ -234,21 +348,37 @@
         data.items.forEach((item) => {
           const tr = document.createElement("tr");
           const href = `/files/${encodeURI(item.path)}`;
+          const fullHref = new URL(href, window.location.origin).toString();
           const paused = String(item.state || "").includes("paused");
           const actionLabel = paused ? "Resume" : "Pause";
           const actionEndpoint = paused ? "/api/torrents/resume" : "/api/torrents/pause";
           tr.innerHTML = `
-            <td><a href="${href}">${item.name}</a></td>
-            <td>${item.state || ""}</td>
-            <td>${item.progress_percent}</td>
-            <td>${item.ratio}</td>
-            <td>${formatSpeed(item.download_speed)}</td>
-            <td>${formatSpeed(item.upload_speed)}</td>
-            <td>
+            <td data-label="Name" class="name">
+              <div class="name-cell">
+                <a href="${href}">${item.name}</a>
+                <button type="button" data-copy-url="${fullHref}">Copy link</button>
+              </div>
+            </td>
+            <td data-label="Status">${item.state || ""}</td>
+            <td data-label="Progress %">${item.progress_percent}</td>
+            <td data-label="Ratio">${item.ratio}</td>
+            <td data-label="Down Speed">${formatSpeed(item.download_speed)}</td>
+            <td data-label="Up Speed">${formatSpeed(item.upload_speed)}</td>
+            <td data-label="Action" class="actions">
               <button data-hash="${item.hash}" data-endpoint="${actionEndpoint}">${actionLabel}</button>
               <button data-hash="${item.hash}" data-endpoint="/api/torrents/delete">Delete (+Data)</button>
             </td>
           `;
+          tr.querySelectorAll("button[data-copy-url]").forEach((copyButton) => {
+            copyButton.addEventListener("click", async () => {
+              try {
+                await navigator.clipboard.writeText(copyButton.dataset.copyUrl || "");
+                setMessage("File URL copied");
+              } catch (err) {
+                setMessage("Failed to copy file URL");
+              }
+            });
+          });
           tr.querySelectorAll("button[data-hash]").forEach((actionButton) => {
             actionButton.addEventListener("click", async () => {
               const payloadBody = { hash: actionButton.dataset.hash };
@@ -307,8 +437,23 @@
             sortKey = nextKey;
             sortDirection = nextKey === "title" || nextKey === "source" ? "asc" : "desc";
           }
+          updateMobileSortControls();
           renderSearchRows();
         });
+      });
+
+      document.getElementById("mobile-sort-key").addEventListener("change", (e) => {
+        const nextKey = e.target.value;
+        sortKey = nextKey;
+        sortDirection = nextKey === "title" || nextKey === "source" ? "asc" : "desc";
+        updateMobileSortControls();
+        renderSearchRows();
+      });
+
+      document.getElementById("mobile-sort-direction").addEventListener("click", () => {
+        sortDirection = sortDirection === "asc" ? "desc" : "asc";
+        updateMobileSortControls();
+        renderSearchRows();
       });
 
       document.getElementById("save-limits").addEventListener("click", async () => {
@@ -331,6 +476,7 @@
       });
 
       setServiceLinks();
+      updateMobileSortControls();
       loadLimits();
       loadServiceStatus();
       loadTorrents();
